@@ -1,5 +1,12 @@
 # Before you start the repository make sure you run through the changes below
 
+Go to edge impulse -> deployment
+
+1. Select the deployment to use C++ library
+2. Build
+3. Once build finished, download the latest build zip.
+4. Copy all the directories in the zip into the root of this project. It contains our model and all the necessary edge impulse inference code.
+
 # SDK config
 Set the esp-idf SDK configuration (cmd+shift+p -> menuconfig).
 
