@@ -49,3 +49,8 @@ managed_components
 
 # Contains credentials for the MQTT broker and other sensitive data
 nvs.csv
+
+# Edge Impulse specific files
+edge-impulse-sdk/
+model-parameters/
+tflite-model/

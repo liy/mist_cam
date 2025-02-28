@@ -3,7 +3,7 @@
   "idf.espIdfPath": "/Users/liy/esp/esp-idf",
   "idf.pythonInstallPath": "/opt/homebrew/bin/python3",
   "idf.openOcdConfigs": ["board/esp32s3-builtin.cfg"],
-  "idf.port": "/dev/tty.usbmodem1101",
+  "idf.port": "/dev/tty.usbmodem101",
   "idf.toolsPath": "/Users/liy/.espressif",
   "idf.customExtraVars": {
     "IDF_TARGET": "esp32s3"
