@@ -1,0 +1,6 @@
+[submodule "components/mist_comm"]
+	path = components/mist_comm
+	url = git@github.com:liy/mist_comm.git
+[submodule "components/mist_messages"]
+	path = components/mist_messages
+	url = git@github.com:liy/mist_messages.git

@@ -1,0 +1,49 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Proto",
+      "type": "shell",
+      "command": "${workspaceFolder}/components/mist_messages/scripts/proto_compile.sh",
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "detail": "This task runs the proto_compile.sh script to compile .proto files."
+    },
+    {
+      "label": "Flash nvs",
+      "type": "shell",
+      "command": "bash",
+      "args": [
+        "-c",
+        "source $HOME/esp/esp-idf/export.sh && python3 ${workspaceFolder}/scripts/flash_nvs.py"
+      ],
+      "problemMatcher": [],
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "presentation": {
+        "echo": true,
+        "reveal": "always",
+        "focus": false,
+        "panel": "shared",
+        "showReuseMessage": true,
+        "clear": true
+      }
+    },
+
+    {
+      "label": "Erase Flash",
+      "type": "shell",
+      "command": "sh",
+      "args": [
+        "-c",
+        "source $HOME/esp/esp-idf/export.sh && esptool.py --port ${config:idf.port} erase_flash"
+      ],
+      "problemMatcher": [],
+      "detail": "This task erases the flash memory of the ESP device."
+    }
+  ]
+}

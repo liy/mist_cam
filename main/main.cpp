@@ -39,7 +39,7 @@ static const char *TAG = "mist_cam";
 #define INPUT_WIDTH 350
 #define INPUT_HEIGHT 350
 
-#define INFERENCE_TASK_STACK_SIZE (16*1024) // 16KB stack
+#define PROCESS_TASK_STACK_SIZE (16*1024) // 16KB stack
 
 static camera_config_t camera_config = {
     .pin_pwdn = CAM_PIN_PWDN,
@@ -86,20 +86,21 @@ static camera_config_t camera_config = {
     .grab_mode = CAMERA_GRAB_WHEN_EMPTY,
 };
 
-void print_inference_result(ei_impulse_result_t result) {
+void print_inference_result(ei_impulse_result_t result) 
+{
     // Print how long it took to perform inference
-    ei_printf("Timing: DSP %d ms, inference %d ms, anomaly %d ms\r\n",
+    ESP_LOGI(TAG, "Timing: DSP %d ms, inference %d ms, anomaly %d ms",
             result.timing.dsp,
             result.timing.classification,
             result.timing.anomaly);
 
-    ei_printf("Object detection bounding boxes:\r\n");
+    ESP_LOGI(TAG, "Object detection bounding boxes:");
     for (uint32_t i = 0; i < result.bounding_boxes_count; i++) {
         ei_impulse_result_bounding_box_t bb = result.bounding_boxes[i];
         if (bb.value == 0) {
             continue;
         }
-        ei_printf("  %s (%f) [ x: %u, y: %u, width: %u, height: %u ]\r\n",
+        ESP_LOGI(TAG, "  %s (%f) [ x: %u, y: %u, width: %u, height: %u ]",
                 bb.label,
                 bb.value,
                 bb.x,
@@ -119,11 +120,87 @@ static esp_err_t init_camera(void)
         return err;
     }
 
+    // Initialize SD card
+    esp_vfs_fat_sdmmc_mount_config_t mount_config = {
+        .format_if_mount_failed = true,
+        .max_files = 5,
+        .allocation_unit_size = 16 * 1024
+    };
+
+    sdmmc_host_t host = SDSPI_HOST_DEFAULT();
+
+    spi_bus_config_t bus_cfg = {
+        .mosi_io_num = PIN_NUM_MOSI,
+        .miso_io_num = PIN_NUM_MISO,
+        .sclk_io_num = PIN_NUM_CLK,
+        .quadwp_io_num = -1,
+        .quadhd_io_num = -1,
+        .max_transfer_sz = 4000,
+    };
+
+    esp_err_t ret = spi_bus_initialize((spi_host_device_t)host.slot, &bus_cfg, SDSPI_DEFAULT_DMA);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to initialize bus.");
+        return ret;
+    }
+
+    sdspi_device_config_t slot_config = SDSPI_DEVICE_CONFIG_DEFAULT();
+    slot_config.gpio_cs = PIN_NUM_CS;
+    slot_config.host_id = (spi_host_device_t)host.slot;
+
+    // Mount SD card
+    sdmmc_card_t *card;
+    ret = esp_vfs_fat_sdspi_mount(MOUNT_POINT, &host, &slot_config, &mount_config, &card);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to mount SD card (%s)", esp_err_to_name(ret));
+        return ret;
+    }
+
     return ESP_OK;
 }
 
-void inference_task(void* pvParameters) {
-    camera_fb_t *pic = (camera_fb_t*)pvParameters;
+void process_task(void* pvParameters) 
+{
+    // Take a picture
+    camera_fb_t *pic = esp_camera_fb_get();
+    if (!pic) {
+        ESP_LOGE("Camera", "Camera capture failed");
+        return;
+    }
+
+    // Save the image to the SD card
+    const char *path = MOUNT_POINT"/photo.pgm";
+    FILE *file = fopen(path, "w");
+    if (!file) {
+        ESP_LOGE(TAG, "Failed to open file for writing");
+        esp_camera_fb_return(pic);
+        return;
+    }
+
+    // Write PGM header
+    fprintf(file, "P5\n%d %d\n255\n", pic->width, pic->height);
+    
+    // Write buffer to SD card in chunks
+    size_t chunk_size = 1024; // Adjust the chunk size if necessary
+    size_t offset = 0;
+
+    while (offset < pic->len) {
+        size_t to_write = MIN(chunk_size, pic->len - offset);
+        size_t written = fwrite(pic->buf + offset, 1, to_write, file);
+        if (written != to_write) {
+            ESP_LOGE(TAG, "Failed to write complete chunk to file");
+            fclose(file);
+            esp_camera_fb_return(pic);
+            return;
+        }
+        offset += written;
+    }
+
+    fclose(file); //Close file after writing all chunks
+    fflush(file); // Ensure all data is flushed to the file
+    
+    ESP_LOGI("Camera", "Image size: %zu bytes", pic->len);
+    ESP_LOGI("Camera", "Image saved to %s", path);
 
     // // Allocate memory for the image array to stores the grayscale image
     uint8_t *image_data = (uint8_t*)calloc(INPUT_WIDTH * INPUT_HEIGHT, sizeof(uint8_t));
@@ -165,18 +242,23 @@ void inference_task(void* pvParameters) {
         return ESP_OK;
     };
 
-    ei_printf("Edge Impulse standalone inferencing (Espressif ESP32)\n");
+    ESP_LOGI(TAG, "Edge Impulse standalone inference (Espressif ESP32)\n");
     // You also need to define the result variable before using it
     ei_impulse_result_t result = { 0 };
     // invoke the impulse
     EI_IMPULSE_ERROR res = run_classifier(&features_signal, &result, false /* debug */);
     if (res != EI_IMPULSE_OK) {
-        ei_printf("ERR: Failed to run classifier (%d)\n", res);
+        ESP_LOGE(TAG, "ERR: Failed to run classifier (%d)\n", res);
     }
     print_inference_result(result);
 
     // Delete the task when it's done
-    vTaskDelete(NULL); // THIS IS THE CRITICAL LINE
+    vTaskDelete(NULL);
+}
+
+static void launch_task() {
+    // Create a task with sufficient stack for inference
+    xTaskCreate(process_task, "process_task", PROCESS_TASK_STACK_SIZE, NULL, tskIDLE_PRIORITY + 1, NULL);
 }
 
 extern "C" void app_main(void)
@@ -185,86 +267,6 @@ extern "C" void app_main(void)
         ESP_LOGE(TAG, "Camera Init Failed");
         return;
     }
-
-    // Initialize SD card
-    esp_vfs_fat_sdmmc_mount_config_t mount_config = {
-        .format_if_mount_failed = true,
-        .max_files = 5,
-        .allocation_unit_size = 16 * 1024
-    };
-
-    sdmmc_host_t host = SDSPI_HOST_DEFAULT();
-
-    spi_bus_config_t bus_cfg = {
-        .mosi_io_num = PIN_NUM_MOSI,
-        .miso_io_num = PIN_NUM_MISO,
-        .sclk_io_num = PIN_NUM_CLK,
-        .quadwp_io_num = -1,
-        .quadhd_io_num = -1,
-        .max_transfer_sz = 4000,
-    };
-
-    esp_err_t ret = spi_bus_initialize((spi_host_device_t)host.slot, &bus_cfg, SDSPI_DEFAULT_DMA);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to initialize bus.");
-        return;
-    }
-
-    sdspi_device_config_t slot_config = SDSPI_DEVICE_CONFIG_DEFAULT();
-    slot_config.gpio_cs = PIN_NUM_CS;
-    slot_config.host_id = (spi_host_device_t)host.slot;
-
-    // Mount SD card
-    sdmmc_card_t *card;
-    ret = esp_vfs_fat_sdspi_mount(MOUNT_POINT, &host, &slot_config, &mount_config, &card);
-    if (ret != ESP_OK) {
-        ESP_LOGE("SD", "Failed to mount SD card (%s)", esp_err_to_name(ret));
-        return;
-    }
-
-    // Take a picture
-    camera_fb_t *pic = esp_camera_fb_get();
-    if (!pic) {
-        ESP_LOGE("Camera", "Camera capture failed");
-        return;
-    }
-
-    // Save the image to the SD card
-    const char *path = MOUNT_POINT"/photo.pgm";
-    FILE *file = fopen(path, "w");
-    if (!file) {
-        ESP_LOGE("SD", "Failed to open file for writing");
-        esp_camera_fb_return(pic);
-        return;
-    }
-
-    // Write PGM header
-    fprintf(file, "P5\n%d %d\n255\n", pic->width, pic->height);
-    
-    // Write buffer to SD card in chunks
-    size_t chunk_size = 1024; // Adjust the chunk size if necessary
-    size_t offset = 0;
-
-    while (offset < pic->len) {
-        size_t to_write = MIN(chunk_size, pic->len - offset);
-        size_t written = fwrite(pic->buf + offset, 1, to_write, file);
-        if (written != to_write) {
-            ESP_LOGE("SD", "Failed to write complete chunk to file");
-            fclose(file);
-            esp_camera_fb_return(pic);
-            return;
-        }
-        offset += written;
-    }
-
-    fclose(file); //Close file after writing all chunks
-    fflush(file); // Ensure all data is flushed to the file
-    
-    ESP_LOGI("Camera", "Image size: %zu bytes", pic->len);
-    ESP_LOGI("Camera", "Image saved to %s", path);
-
-    // Create a task with sufficient stack for inference
-    xTaskCreate(inference_task, "inference_task", INFERENCE_TASK_STACK_SIZE, (void*) pic, tskIDLE_PRIORITY + 1, NULL);
 
     while(true) {
         vTaskDelay(pdMS_TO_TICKS(100));

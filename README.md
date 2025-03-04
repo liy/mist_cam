@@ -1,5 +1,12 @@
 # Before you start the repository make sure you run through the changes below
 
+# Submodules
+Run `git submodule update --init --recursive` to update all the submodules, including the nested `nanopb` submodule in `mist_messages` submodule.
+
+# Protobuf
+Run `CMD + SHIFT + P`, run task `Proto`. This will build all the necessary protobuf message structs, the protobuf message is used in MQTT to send data.
+
+# Edge impulse
 Go to edge impulse -> deployment
 
 1. Select the deployment to use C++ library
@@ -8,7 +15,7 @@ Go to edge impulse -> deployment
 4. Copy all the directories in the zip into the root of this project. It contains our model and all the necessary edge impulse inference code.
 
 # SDK config
-Set the esp-idf SDK configuration (cmd+shift+p -> menuconfig).
+Set the esp-idf SDK configuration (`CMD + SHIFT + P` -> menuconfig).
 
 * Enable SPIRAM. This ensure we have enough memory to work on image and edge impulse features
 * Set Mode (QUAD/OCT) of SPI RAM chip in use SPIRAM_MODE to: `Octal Mode PSRAM`. So it has higher bandwidth for the imaging and ML task.
